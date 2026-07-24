@@ -2,7 +2,6 @@
 
 #include <windows.h>
 #include <winternl.h>
-#include <tchar>
 
 #pragma code_seg(".text$A")
 
