@@ -114,10 +114,64 @@ static void *elf_sym(char *base, const char *name)
 
 static void *elf_load(char *raw)
 {
+    Elf32_Ehdr *eh = (Elf32_Ehdr *)raw;
 
+    if (!(eh->e_ident[0] == 0x7F && eh->e_ident[1] == 'E' && eh->e_ident[2] == 'L' && eh->e_ident[3] == 'F'))
+        return 0;
+
+    Elf32_Phdr *ph = (Elf32_Phdr *)(raw + eh->e_phoff);
+    uint32_t min_va = 0xFFFFFFFF;
+    uint32_t max_va = 0;
+
+    for (int i = 0; i < eh->e_phnum; i++)
+    {
+        if (ph[i].p_type != PT_LOAD)
+            continue;
+
+        if (ph[i].p_vaddr < min_va)
+            min_va = ph[i].p_vaddr;
+
+        uint32_t end = ph[i].p_vaddr + ph[i].p_memsz;
+        if (end > max_va)
+            max_va = end;
+    }
+
+    char *base = (char *)_mmap(0, max_va - min_va, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON);
+    if ((long)base < 0)
+        return 0;
+
+    for (int i = 0; i < eh->e_phnum; i++)
+    {
+        if (ph[i].p_type != PT_LOAD)
+            continue;
+
+        char *dest = base + (ph[i].p_vaddr - min_va);
+        _memcpy(dest, raw + ph[i].p_offset, ph[i].p_filesz);
+    }
+
+    uint32_t load_bias = (uint32_t)base - min_va;
+
+    Elf32_Shdr *sh = (Elf32_Shdr *)(raw + eh->e_shoff);
+    for (int i = 0; i < eh->e_shnum; i++)
+    {
+        if (sh[i].sh_type != SHT_REL)
+            continue;
+        
+        Elf32_Rel *rel = (Elf32_Rel *)(raw + sh[i].sh_offset);
+        int nrel = sh[i].sh_size / sizeof(Elf32_Rel);
+        for (int j = 0; j < nrel; j++)
+        {
+            uint32_t type = ELF32_R_TYPE(rel[j].r_info);
+            uint32_t *target = (uint32_t *)(load_bias + rel[j].r_offset);
+            if (type == R_386_RELATIVE)
+                *target += load_bias;
+        }
+    }
+
+    return base;
 }
 
 void shellcode_entry(void)
 {
-
+    
 }
