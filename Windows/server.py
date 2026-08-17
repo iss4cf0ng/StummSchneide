@@ -171,10 +171,11 @@ def do_interactive(conn: socket.socket):
     while True:
         print('Available module(s):')
         for i in module.keys():
-            print(f'\t{i}')
+            print(f'- {i}')
     
         option = input('Enter module: ')
         if option not in module.keys():
+            print(f'[!] Unknown module: {option}')
             continue
 
         if option == 'exit':
@@ -184,8 +185,10 @@ def do_interactive(conn: socket.socket):
         module[option](conn)
 
 def main():
-
     if args.encode:
+        if not (args.input_file and args.output_file):
+            return
+        
         build_stubbed_shellcode(args.input_file, args.output_file)
         return
 

