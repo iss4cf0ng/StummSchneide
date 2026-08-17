@@ -1,4 +1,37 @@
-gcc -O1 -nostdlib -fPIC -fno-plt -ffreestanding -fno-stack-protector -fno-exceptions -m32 -c shellcode_linux.c -o shellcode_linux.o
-objcopy --only-section=.text -O binary shellcode_linux.o shellcode_linux.bin
-gcc -shared -fPIC -m32 -nostdlib -o payload_linux.so payload_linux.c
-gcc -o loader_linux loader_linux.c -z execstack -m32
+#!/bin/bash
+set -e
+
+FLAGS="-O1 -nostdlib -fno-pic -fno-plt -ffreestanding \
+       -fno-stack-protector -fno-exceptions"
+
+cat > link.ld << 'LDEOF'
+OUTPUT_FORMAT(binary)
+SECTIONS {
+    . = 0;
+    .text : {
+        entry_linux.o(.text)
+        helpers_linux.o(.text)
+        *(.text*)
+        *(.rodata*)
+    }
+}
+LDEOF
+
+echo "[*] compiling..."
+gcc $FLAGS -c entry_linux.c   -o entry_linux.o
+gcc $FLAGS -c helpers_linux.c -o helpers_linux.o
+
+echo "[*] linking..."
+ld -T link.ld entry_linux.o helpers_linux.o -o shellcode_linux.bin
+echo "    $(wc -c < shellcode_linux.bin) bytes"
+
+echo "[*] verifying..."
+nm -n entry_linux.o | grep " T shellcode_entry"
+
+echo "[*] building payload..."
+gcc -shared -fPIC -nostdlib -o payload_linux.so payload_linux.c
+
+echo "[*] building loader..."
+gcc -o loader_linux loader_linux.c
+
+echo "[+] done"

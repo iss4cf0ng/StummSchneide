@@ -1,16 +1,16 @@
-// payload.c
-// gcc -shared -fPIC -m32 -nostdlib -o payload.so payload.c
+// payload_linux.c
+// gcc -shared -fPIC -nostdlib -o payload_linux.so payload_linux.c
 
-#include <stdio.h>
-#include <stdlib.h>
-
-static void _write(int fd, const char* s, int n) {
-    __asm__ volatile("int $0x80"
-        : : "a"(4), "b"(fd), "c"(s), "d"(n) : "memory");
+static void _write(int fd, const char* s, long n)
+{
+    __asm__ volatile("syscall"
+        : : "a"(1L), "D"((long)fd), "S"(s), "d"(n)
+        : "rcx","r11","memory");
 }
 
 __attribute__((visibility("default")))
-void payload_run(void) {
+void payload_run(void)
+{
     const char msg[] = "[+] StummSchneide\n";
     _write(1, msg, sizeof(msg) - 1);
 }
