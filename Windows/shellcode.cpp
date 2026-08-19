@@ -265,7 +265,8 @@ void ShellcodeEntry()
 }
 
 // System Environment Helpers
-extern "C" __attribute__((section(".text$B"))) ULONG_PTR GetKernel32Base()
+extern "C" __attribute__((section(".text$B")))
+ULONG_PTR GetKernel32Base()
 {
     ULONG_PTR kernel32 = 0;
     __asm__ (
@@ -283,7 +284,8 @@ extern "C" __attribute__((section(".text$B"))) ULONG_PTR GetKernel32Base()
     return kernel32;
 }
 
-extern "C" __attribute__((section(".text$C"))) ULONG_PTR CustomGetProcAddress(ULONG_PTR moduleBase, const char* funcName)
+extern "C" __attribute__((section(".text$C")))
+ULONG_PTR CustomGetProcAddress(ULONG_PTR moduleBase, const char* funcName)
 {
     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)moduleBase;
     PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)(moduleBase + dosHeader->e_lfanew);
