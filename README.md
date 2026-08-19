@@ -12,6 +12,11 @@ Please do **NOT** use it for illegal activities. The author is not responsible f
 
 Inspired by Meterpreter, StummSchneide's shellcode downloads a DLL from the C2 server and perform reflective DLL injection.
 
+- Info
+- File Manager
+- Screenshot
+- Command Execution
+
 # Usage
 
 On Linux (C2 server):
