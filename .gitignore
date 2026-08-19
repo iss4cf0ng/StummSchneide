@@ -4,3 +4,6 @@
 *.dll
 *.o
 *.lib
+
+*.jpg
+*.png

